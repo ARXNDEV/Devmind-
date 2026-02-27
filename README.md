@@ -44,3 +44,7 @@ packages/
 docs/           Architecture docs and ADRs
 infra/          Docker Compose, service configs, CI
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow, [SECURITY.md](SECURITY.md) for reporting vulnerabilities, and [CHANGELOG.md](CHANGELOG.md) for release notes.
