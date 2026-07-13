@@ -1,0 +1,20 @@
+# 10 — Roadmap
+
+Eight phases, each shippable and demoable. Rule of sequencing: **the engine before the agents, the agents before the polish** — and one thin vertical slice as early as possible (end of Phase 3) to validate the architecture against a real repository.
+
+| Phase | Scope | Exit criteria |
+| --- | --- | --- |
+| **1 — Foundation** | Monorepo scaffold (`apps/web`, `apps/api`, `services/code-intel`, `packages/shared-types`, `infra/`). Docker Compose with all stores. NestJS skeleton: Identity + Projects modules, auth, RBAC guards, config validation, audit interceptor, migrations. FastAPI skeleton: settings, health, arq wiring, internal-auth middleware. OpenAPI generation + client codegen. CI pipeline. OTel + structured logging in both services. | `docker compose up` yields a healthy stack; a user can register an org, log in, create a project, and every request is traced, logged, validated, and audited. CI green. |
+| **2 — Code intelligence** | Repo connections (encrypted credentials), clone + snapshot, Tree-sitter parsing, extractors for TS/JS + Python + Java, resolution, Neo4j graph, incremental indexing, `jobs` pattern end-to-end with SSE progress. Repository Explorer UI (tree + Monaco + symbol outline). | A real multi-hundred-kLOC repo indexes incrementally; graph queries (callers/callees/impact neighborhood) return correct results verified against hand-checked samples. |
+| **3 — RAG & search** | Chunking, embeddings, Qdrant dense+sparse, all retrievers, RRF fusion, reranker port, context assembler with citations. Retrieval eval harness in CI. Repository Chat UI with streaming + citation links. **This completes the vertical slice.** | An engineer asks real questions about the pilot repo and gets cited, correct answers; recall@10 on the golden set beats agreed baseline; search p95 < 2s. |
+| **4 — Log monitoring** | Ingest endpoint + Redis Stream pipeline, adapters (app/Docker/K8s/syslog/DB), Drain fingerprinting, partitioned storage + retention, EWMA anomaly detection, deploy markers. Log Explorer UI. Incident creation on anomaly. | Logs from a real system flow in at target volume; anomalies open deduplicated incidents with correct fingerprints; retention enforced. |
+| **5 — Root cause** | LangGraph supervisor + registry; Retrieval, Git, Debug, Root-Cause, Knowledge agents; agent run persistence + step traces; incident investigation flow (auto + manual); root-cause reports with confidence + evidence; similar-incident lookup. Incident timeline UI. | For seeded real-bug scenarios in the pilot repo, the Root-Cause agent identifies the faulty module/commit with cited evidence in the majority of cases, in < 5 minutes. |
+| **6 — Patch generation** | Patch agent (unified diffs + rationale + risk notes + rollback), test generation, Verification agent + sandbox runner, patch review workflow (approve/reject/comment), PR-style diff UI. | From an incident, the platform proposes a patch that applies cleanly, passes sandboxed verification, and ships with tests + rollback instructions; nothing is ever auto-applied. |
+| **7 — Dashboard & product surface** | Real-time incident dashboard, architecture visualization (React Flow over module graph), dependency graph explorer, bug-history & knowledge base views, impact-analysis UI, admin/settings, dark-mode enterprise theme pass, responsive audit. | The full UI page list from the product spec exists and is demoable end-to-end to an enterprise buyer. |
+| **8 — Production hardening** | SSO (OIDC/SAML), per-org rate/cost limits, backup/restore drills, load testing to 25+ concurrent engineers, security review (OWASP ASVS-driven), pilot deployment runbook, docs. | A pilot customer can be onboarded onto a hardened single-host deployment with an on-call runbook and tested DR. |
+
+## Standing rules across phases
+
+- No phase ships without its tests, its metrics, and its docs updated.
+- Any deviation from these architecture docs requires updating the doc (and an ADR if the decision is load-bearing) in the same PR.
+- Retrieval and agent quality are measured, not vibed: golden sets grow every phase from real usage.
