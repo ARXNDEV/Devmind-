@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* DevMind enterprise theme — dark by default (product spec). */
+@theme {
+  --color-surface-950: #0a0c10;
+  --color-surface-900: #10131a;
+  --color-surface-800: #171b24;
+  --color-surface-700: #232936;
+  --color-line: #2a3140;
+  --color-ink-100: #f4f6fa;
+  --color-ink-300: #c3cad6;
+  --color-ink-500: #8b94a7;
+  --color-accent-400: #7c9aff;
+  --color-accent-500: #5b7cfa;
+  --color-accent-600: #4763d6;
+  --color-danger-500: #e5484d;
+  --color-success-500: #46a758;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background-color: var(--color-surface-950);
+  color: var(--color-ink-100);
+}
