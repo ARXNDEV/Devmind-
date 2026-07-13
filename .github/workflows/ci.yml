@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      web: ${{ steps.filter.outputs.web }}
+      code-intel: ${{ steps.filter.outputs.code-intel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+              - 'packages/shared-types/**'
+              - 'infra/**'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/**'
+            web:
+              - 'apps/web/**'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/**'
+            code-intel:
+              - 'services/code-intel/**'
+              - '.github/workflows/**'
+
+  api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @devmind/api lint
+      - run: pnpm --filter @devmind/api typecheck
+      - run: pnpm --filter @devmind/api test
+
+      - name: Start postgres + redis
+        run: docker compose -f infra/docker-compose.yml up -d --wait postgres redis
+      - name: Run migrations (migrator role)
+        run: pnpm --filter @devmind/api db:migrate
+        env:
+          API_MIGRATION_DATABASE_URL: postgres://migrator:migrator_dev_password@localhost:5432/devmind
+      - name: E2E tests
+        run: pnpm --filter @devmind/api test:e2e
+
+      - name: Contract drift check
+        run: |
+          pnpm codegen
+          git diff --exit-code packages/shared-types/ \
+            || (echo '::error::OpenAPI contract drifted — run `pnpm codegen` and commit the result' && exit 1)
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @devmind/web lint
+      - run: pnpm --filter @devmind/web typecheck
+      - run: pnpm --filter @devmind/web build
+
+  code-intel:
+    needs: changes
+    if: needs.changes.outputs.code-intel == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/code-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/code-intel/uv.lock
+      - run: uv sync --frozen
+      - run: uv run ruff check src tests
+      - run: uv run mypy
+      # Live model tests self-skip when Ollama is absent, so CI stays green
+      # without a model server; the provider logic is covered by mocked tests.
+      - run: uv run pytest -q
+
+  docker-build:
+    # Image build validation on main only — PRs get the fast path.
+    if: github.ref == 'refs/heads/main'
+    needs: [api, web, code-intel]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+          - name: web
+            dockerfile: apps/web/Dockerfile
+          - name: code-intel
+            dockerfile: services/code-intel/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: devmind-${{ matrix.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max

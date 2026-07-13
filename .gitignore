@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.uv-cache/
+
+# Builds
+dist/
+build/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+coverage/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment — never commit real config
+.env
+.env.*
+!.env.example
+
+# Data & runtime
+infra/.data/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

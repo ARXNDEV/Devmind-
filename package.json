@@ -1,0 +1,29 @@
+{
+  "name": "devmind",
+  "private": true,
+  "packageManager": "pnpm@10.34.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "codegen": "pnpm --filter @devmind/api openapi:export ../../packages/shared-types/openapi.json && pnpm --filter @devmind/shared-types generate"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "argon2",
+      "@swc/core",
+      "esbuild",
+      "sharp"
+    ]
+  }
+}
