@@ -17,15 +17,20 @@ import structlog
 from ..config import Settings, get_settings
 from ..graph.base import CallRef, GraphFile, ImportRef, InheritRef
 from ..graph.neo4j_graph import Neo4jCodeGraph
+from ..models.base import EmbeddingProvider
 from ..parsing import extract_file
 from ..parsing.ir import FileIR, SymbolDef
+from ..retrieval.vector_store import QdrantVectorStore
 from ..store.db import Database
 from ..store.repositories import FileStateStore, IndexRunStore
 from .acquire import acquire
+from .chunking import Chunk, chunk_file
 from .fileset import SourceFile, walk_source_files
 from .snapshot import snapshot_tree
 
 logger = structlog.get_logger(__name__)
+
+_EMBED_BATCH_SIZE = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,12 +60,20 @@ class IndexingPipeline:
         db: Database,
         graph: Neo4jCodeGraph,
         settings: Settings | None = None,
+        embedder: EmbeddingProvider | None = None,
+        vectors: QdrantVectorStore | None = None,
     ) -> None:
         self._db = db
         self._graph = graph
         self._settings = settings or get_settings()
         self._runs = IndexRunStore(db)
         self._files = FileStateStore(db)
+        # Both or neither: embedding without a store (or vice versa) is a
+        # wiring bug, not a degraded mode.
+        if (embedder is None) != (vectors is None):
+            raise ValueError("embedder and vectors must be provided together")
+        self._embedder = embedder
+        self._vectors = vectors
 
     async def run(self, request: IndexRequest) -> IndexResult:
         repo_id_str = str(request.repo_id)
@@ -71,6 +84,8 @@ class IndexingPipeline:
         started = time.monotonic()
         try:
             await self._graph.ensure_constraints()
+            if self._vectors is not None:
+                await self._vectors.ensure_collection()
             previous_commit = await self._runs.latest_indexed_commit(request.repo_id)
             mode = self._decide_mode(request.mode, previous_commit)
 
@@ -96,16 +111,21 @@ class IndexingPipeline:
 
             if mode == "full":
                 await self._graph.purge_repo(repo_id_str)
+                if self._vectors is not None:
+                    await self._vectors.purge_repo(repo_id_str)
 
             # Remove disappeared/changed files from the graph before rewriting.
             await self._graph.delete_files(repo_id_str, [*deleted, *changed])
+            if self._vectors is not None:
+                await self._vectors.delete_paths(repo_id_str, [*deleted, *changed])
             await self._files.delete_paths(request.repo_id, deleted)
 
-            indexed = await self._index_files(
+            indexed, irs = await self._index_files(
                 repo_id_str, run_id, request.repo_id, [present[p] for p in changed]
             )
 
             stats = await self._graph.repo_stats(repo_id_str)
+            stats["chunks_embedded"] = await self._embed_files(repo_id_str, irs)
             stats["duration_ms"] = int((time.monotonic() - started) * 1000)
             await self._runs.finish(run_id, status="succeeded", stats=stats)
 
@@ -159,9 +179,9 @@ class IndexingPipeline:
         run_id: UUID,
         repo_id: UUID,
         files: list[SourceFile],
-    ) -> int:
+    ) -> tuple[int, list[tuple[SourceFile, FileIR]]]:
         if not files:
-            return 0
+            return 0, []
 
         graph_files: list[GraphFile] = []
         symbols_by_path: dict[str, list[SymbolDef]] = {}
@@ -207,4 +227,23 @@ class IndexingPipeline:
                 symbol_count=len(ir.symbols),
                 run_id=run_id,
             )
-        return len(irs)
+        return len(irs), irs
+
+    async def _embed_files(
+        self, repo_id_str: str, irs: list[tuple[SourceFile, FileIR]]
+    ) -> int:
+        """Chunk and embed the just-indexed files into the vector store."""
+        if self._embedder is None or self._vectors is None or not irs:
+            return 0
+
+        chunks: list[Chunk] = []
+        for sf, ir in irs:
+            chunks.extend(
+                chunk_file(repo_id_str, sf.path, sf.language, sf.content, ir)
+            )
+
+        for start in range(0, len(chunks), _EMBED_BATCH_SIZE):
+            batch = chunks[start : start + _EMBED_BATCH_SIZE]
+            vectors = await self._embedder.embed([c.text for c in batch])
+            await self._vectors.upsert_chunks(repo_id_str, batch, vectors)
+        return len(chunks)

@@ -16,6 +16,7 @@ from .health import router as health_router
 from .logging import configure_logging
 from .middleware import InternalAuthMiddleware
 from .models import build_embedding_provider, build_model_provider
+from .retrieval import QdrantVectorStore, SemanticSearch
 
 
 class IndexRunRequest(BaseModel):
@@ -30,6 +31,14 @@ class IndexRunRequest(BaseModel):
     mode: str = "auto"
 
 
+class SearchRequest(BaseModel):
+    """Semantic search over an indexed repository (07-api-contracts.md)."""
+
+    repoId: str  # noqa: N815 - matches the JSON contract with the api
+    query: str
+    limit: int = 10
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -38,11 +47,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     # Shared read-only graph driver for query endpoints.
     app.state.graph = Neo4jCodeGraph(settings)
+    # Retrieval plane: query embedding + vector search + graph enrichment.
+    app.state.embedder = build_embedding_provider(settings)
+    app.state.vectors = QdrantVectorStore(settings)
+    app.state.search = SemanticSearch(
+        embedder=app.state.embedder,
+        vectors=app.state.vectors,
+        graph=app.state.graph,
+    )
     structlog.get_logger().info(
         "code-intel starting", version=__version__, environment=settings.environment
     )
     yield
     await app.state.arq.aclose()
+    await app.state.embedder.aclose()
+    await app.state.vectors.aclose()
     await app.state.graph.close()
     structlog.get_logger().info("code-intel stopped")
 
@@ -86,6 +105,33 @@ def create_app() -> FastAPI:
             mode=body.mode,
         )
         return {"taskId": job.job_id if job else ""}
+
+    @app.post("/internal/v1/retrieval/search")
+    async def retrieval_search(
+        body: SearchRequest, request: Request
+    ) -> dict[str, object]:
+        """Dense semantic search with graph enrichment on the top hits."""
+        limit = max(1, min(body.limit, 50))
+        results = await request.app.state.search.search(
+            body.repoId, body.query, limit=limit
+        )
+        return {
+            "query": body.query,
+            "results": [
+                {
+                    "score": r.score,
+                    "path": r.path,
+                    "language": r.language,
+                    "fqn": r.fqn,
+                    "kind": r.kind,
+                    "startLine": r.start_line,
+                    "endLine": r.end_line,
+                    "text": r.text,
+                    "graphContext": r.graph_context,
+                }
+                for r in results
+            ],
+        }
 
     @app.get("/internal/v1/graph/neighborhood")
     async def graph_neighborhood(

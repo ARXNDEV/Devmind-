@@ -16,6 +16,8 @@ from .config import get_settings
 from .graph.neo4j_graph import Neo4jCodeGraph
 from .indexing import IndexingPipeline
 from .logging import configure_logging
+from .models import build_embedding_provider
+from .retrieval import QdrantVectorStore
 from .store.db import Database
 from .tasks import index_repository
 
@@ -29,9 +31,16 @@ async def startup(ctx: dict[str, Any]) -> None:
     await db.migrate()
     graph = Neo4jCodeGraph(settings)
     await graph.ensure_constraints()
+    embedder = build_embedding_provider(settings)
+    vectors = QdrantVectorStore(settings)
+    await vectors.ensure_collection()
     ctx["db"] = db
     ctx["graph"] = graph
-    ctx["pipeline"] = IndexingPipeline(db=db, graph=graph, settings=settings)
+    ctx["embedder"] = embedder
+    ctx["vectors"] = vectors
+    ctx["pipeline"] = IndexingPipeline(
+        db=db, graph=graph, settings=settings, embedder=embedder, vectors=vectors
+    )
     ctx["redis_pub"] = aioredis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
     logger.info("worker started")
 
@@ -41,6 +50,10 @@ async def shutdown(ctx: dict[str, Any]) -> None:
         await graph.close()
     if db := ctx.get("db"):
         await db.close()
+    if embedder := ctx.get("embedder"):
+        await embedder.aclose()
+    if vectors := ctx.get("vectors"):
+        await vectors.aclose()
     if pub := ctx.get("redis_pub"):
         await pub.aclose()
     logger.info("worker stopped")
