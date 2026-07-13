@@ -1,0 +1,103 @@
+# Application-services overlay — full containerized stack for pilots/staging:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.apps.yml up -d
+# Local development normally runs apps on the host (pnpm dev / uvicorn) against
+# the containerized stores in docker-compose.yml.
+
+services:
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    command: ["node", "dist/database/migrate.js"]
+    environment:
+      API_MIGRATION_DATABASE_URL: postgres://migrator:${MIGRATOR_PASSWORD:-migrator_dev_password}@postgres:5432/devmind
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      API_DATABASE_URL: postgres://api_service:${API_SERVICE_PASSWORD:-api_dev_password}@postgres:5432/devmind
+      API_REDIS_URL: redis://redis:6379
+      API_JWT_SECRET: ${API_JWT_SECRET:?set in .env}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set in .env}
+      API_CREDENTIAL_KEY: ${API_CREDENTIAL_KEY:?set in .env}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      CODE_INTEL_BASE_URL: http://code-intel:8000
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      # BIND_HOST defaults to loopback (secure); set 0.0.0.0 to expose on a
+      # trusted network (e.g. an internal VPN'd pilot VM).
+      - "${BIND_HOST:-127.0.0.1}:4000:4000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  code-intel:
+    build:
+      context: ..
+      dockerfile: services/code-intel/Dockerfile
+    environment: &code-intel-env
+      NODE_ENV: production
+      CI_DATABASE_URL: postgres://codeintel_service:${CODEINTEL_SERVICE_PASSWORD:-codeintel_dev_password}@postgres:5432/devmind
+      CI_REDIS_URL: redis://redis:6379
+      CI_QDRANT_URL: http://qdrant:6333
+      CI_NEO4J_URL: bolt://neo4j:7687
+      CI_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-devmind_dev_neo4j}
+      CI_S3_ENDPOINT: http://minio:9000
+      CI_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-devmind}
+      CI_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-devmind_dev_minio}
+      CI_INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set in .env}
+      API_BASE_URL: http://api:4000
+      # Local model server (containers address it by name, not localhost).
+      CI_MODEL_BACKEND: ollama
+      CI_OLLAMA_URL: http://ollama:11434
+      CI_LLM_MODEL: ${CI_LLM_MODEL:-qwen2.5-coder:7b}
+      CI_EMBED_MODEL: ${CI_EMBED_MODEL:-nomic-embed-text}
+      CI_EMBED_DIM: ${CI_EMBED_DIM:-768}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  code-intel-worker:
+    build:
+      context: ..
+      dockerfile: services/code-intel/Dockerfile
+    command: ["arq", "devmind_code_intel.worker.WorkerSettings"]
+    environment: *code-intel-env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Empty => browser uses same-origin relative /api calls (default).
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
+    environment:
+      # Server-side proxy target for the Next rewrite (runtime, not baked).
+      API_PROXY_TARGET: http://api:4000
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:3000:3000"
+    depends_on:
+      - api
