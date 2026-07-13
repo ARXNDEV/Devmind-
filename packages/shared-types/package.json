@@ -1,0 +1,20 @@
+{
+  "name": "@devmind/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated API contract types. Never edit src/ by hand — run `pnpm codegen` at the repo root.",
+  "types": "./src/api.ts",
+  "exports": {
+    ".": { "types": "./src/api.ts" }
+  },
+  "scripts": {
+    "generate": "openapi-typescript openapi.json -o src/api.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'generated package — nothing to lint' && exit 0",
+    "test": "echo 'generated package — nothing to test' && exit 0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.0",
+    "typescript": "~5.9.0"
+  }
+}
