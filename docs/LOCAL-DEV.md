@@ -21,3 +21,9 @@ pnpm dev
 | qdrant | 6333 | |
 
 Stop everything with `pnpm infra:down`.
+
+## Troubleshooting
+
+- **Neo4j fails health check**: first start can take ~60s; re-run `pnpm infra:up`.
+- **argon2 build error**: ensure Node >= 20 and build tools installed; `pnpm rebuild argon2`.
+- **Port in use**: override ports in `.env` (see `.env.example`).
