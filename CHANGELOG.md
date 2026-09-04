@@ -16,3 +16,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Phase 3 — RAG & search
 - Symbol-aware chunking, Qdrant embeddings, fused retrieval, semantic search endpoint, retrieval evals.
+
+### Phase 4 — Log monitoring (in progress)
+- Ingest pipeline, Drain fingerprinting, EWMA anomaly detection, log explorer, retention.
