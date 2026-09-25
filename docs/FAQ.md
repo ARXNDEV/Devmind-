@@ -17,3 +17,6 @@ First index of a few hundred kLOC takes minutes; later runs are incremental and 
 
 **Does source code leave the host?**
 Not by default. Embeddings and completions go to the local gateway unless an org opts into a cloud model.
+
+**How does root-cause analysis work?**
+A LangGraph supervisor runs Retrieval, Git, Debug and Root-Cause agents over the incident, code graph and history, and writes a report with evidence and confidence.
